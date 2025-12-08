@@ -1,0 +1,70 @@
+"""Telemetry model for device metrics."""
+
+import enum
+from datetime import datetime
+from uuid import uuid4
+
+from sqlalchemy import BigInteger, DateTime, Enum, Float, ForeignKey, Integer
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.database import Base
+
+
+class TelemetryType(str, enum.Enum):
+    """Type of telemetry data."""
+
+    DEVICE = "device"
+    ENVIRONMENT = "environment"
+    POWER = "power"
+    AIR_QUALITY = "air_quality"
+
+
+class Telemetry(Base):
+    """Telemetry data from a node."""
+
+    __tablename__ = "telemetry"
+
+    id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        primary_key=True,
+        default=lambda: str(uuid4()),
+    )
+    source_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("sources.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    node_num: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+
+    telemetry_type: Mapped[TelemetryType] = mapped_column(
+        Enum(TelemetryType),
+        nullable=False,
+        index=True,
+    )
+
+    # Device metrics
+    battery_level: Mapped[int | None] = mapped_column(Integer)  # 0-100
+    voltage: Mapped[float | None] = mapped_column(Float)
+    channel_utilization: Mapped[float | None] = mapped_column(Float)  # 0-100
+    air_util_tx: Mapped[float | None] = mapped_column(Float)  # 0-100
+    uptime_seconds: Mapped[int | None] = mapped_column(BigInteger)
+
+    # Environment metrics
+    temperature: Mapped[float | None] = mapped_column(Float)  # Celsius
+    relative_humidity: Mapped[float | None] = mapped_column(Float)  # 0-100
+    barometric_pressure: Mapped[float | None] = mapped_column(Float)  # hPa
+
+    # Power metrics
+    current: Mapped[float | None] = mapped_column(Float)  # mA
+
+    # Timestamp
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        index=True,
+    )
+
+    # Relationships
+    source: Mapped["Source"] = relationship("Source", back_populates="telemetry")  # noqa: F821
