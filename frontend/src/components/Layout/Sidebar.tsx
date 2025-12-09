@@ -1,15 +1,11 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { useNodes } from '../../hooks/useNodes'
 import { useSources } from '../../hooks/useSources'
 import { useDataContext } from '../../contexts/DataContext'
-import { useAuthContext } from '../../contexts/AuthContext'
 import NodeList from '../NodeList/NodeList'
-import { AdminPanel } from '../Admin'
 
 export default function Sidebar() {
   const { filterSourceId, showActiveOnly, setShowActiveOnly } = useDataContext()
-  const { isAdmin } = useAuthContext()
-  const [showAdminPanel, setShowAdminPanel] = useState(false)
 
   const { data: sources = [], isLoading: sourcesLoading } = useSources()
   const { data: nodes = [], isLoading: nodesLoading } = useNodes({
@@ -55,7 +51,7 @@ export default function Sidebar() {
         <div className="empty-state">
           <div className="empty-state-icon">📡</div>
           <p>No nodes found</p>
-          {isAdmin && <p style={{ fontSize: '0.875rem', marginTop: '0.5rem' }}>Add a source to get started</p>}
+          <p style={{ fontSize: '0.875rem', marginTop: '0.5rem' }}>Add a source in Settings to get started</p>
         </div>
       ) : (
         <div className="node-list">
@@ -75,17 +71,6 @@ export default function Sidebar() {
           })}
         </div>
       )}
-
-      {isAdmin && (
-        <div className="admin-panel">
-          <h3>Admin</h3>
-          <button className="btn btn-secondary" style={{ width: '100%' }} onClick={() => setShowAdminPanel(true)}>
-            Manage Sources
-          </button>
-        </div>
-      )}
-
-      <AdminPanel isOpen={showAdminPanel} onClose={() => setShowAdminPanel(false)} />
     </aside>
   )
 }

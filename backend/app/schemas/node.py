@@ -27,6 +27,11 @@ class NodeResponse(BaseModel):
     position_time: datetime | None = None
     position_precision_bits: int | None = None
 
+    # Signal info
+    snr: float | None = None
+    rssi: int | None = None
+    hops_away: int | None = None
+
     # Status
     last_heard: datetime | None = None
     is_licensed: bool = False
@@ -48,8 +53,13 @@ class NodeSummary(BaseModel):
     node_id: str | None = None
     short_name: str | None = None
     long_name: str | None = None
+    hw_model: str | None = None
+    role: str | None = None
     latitude: float | None = None
     longitude: float | None = None
+    snr: float | None = None
+    rssi: int | None = None
+    hops_away: int | None = None
     last_heard: datetime | None = None
 
     model_config = {"from_attributes": True}

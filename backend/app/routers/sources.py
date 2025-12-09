@@ -16,6 +16,7 @@ from app.schemas.source import (
     SourceResponse,
     SourceTestResult,
 )
+from app.services.collector_manager import collector_manager
 
 router = APIRouter(prefix="/api/admin/sources", tags=["sources"])
 
@@ -49,6 +50,10 @@ async def create_meshmonitor_source(
     db.add(source)
     await db.flush()
     await db.refresh(source)
+
+    # Start collector for the new source
+    await collector_manager.add_source(source)
+
     return SourceResponse.model_validate(source)
 
 
@@ -73,6 +78,10 @@ async def create_mqtt_source(
     db.add(source)
     await db.flush()
     await db.refresh(source)
+
+    # Start collector for the new source
+    await collector_manager.add_source(source)
+
     return SourceResponse.model_validate(source)
 
 
@@ -111,6 +120,10 @@ async def update_meshmonitor_source(
 
     await db.flush()
     await db.refresh(source)
+
+    # Update collector with new config
+    await collector_manager.update_source(source)
+
     return SourceResponse.model_validate(source)
 
 
@@ -135,6 +148,10 @@ async def update_mqtt_source(
 
     await db.flush()
     await db.refresh(source)
+
+    # Update collector with new config
+    await collector_manager.update_source(source)
+
     return SourceResponse.model_validate(source)
 
 
@@ -149,6 +166,9 @@ async def delete_source(
     source = result.scalar()
     if not source:
         raise HTTPException(status_code=404, detail="Source not found")
+
+    # Stop the collector first
+    await collector_manager.remove_source(source_id)
 
     await db.delete(source)
 

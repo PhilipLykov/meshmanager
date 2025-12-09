@@ -2,6 +2,23 @@ import { useMemo } from 'react'
 import { useDataContext } from '../../contexts/DataContext'
 import type { Node } from '../../types/api'
 
+// Meshtastic role mappings
+const ROLE_NAMES: Record<string, string> = {
+  '0': 'Client',
+  '1': 'Client Mute',
+  '2': 'Router',
+  '3': 'Router Client',
+  '4': 'Repeater',
+  '5': 'Tracker',
+  '6': 'Sensor',
+  '7': 'TAK',
+  '8': 'Client Hidden',
+  '9': 'Lost and Found',
+  '10': 'TAK Tracker',
+  '11': 'Router Late',
+  '12': 'Router Client Late',
+}
+
 interface NodeCardProps {
   node: Node
 }
@@ -32,6 +49,8 @@ export default function NodeCard({ node }: NodeCardProps) {
     return `${diffDays}d ago`
   }, [node.last_heard])
 
+  const roleName = node.role ? ROLE_NAMES[node.role] || node.role : null
+
   const displayName = node.long_name || node.short_name || node.node_id || `Node ${node.node_num}`
 
   return (
@@ -47,14 +66,20 @@ export default function NodeCard({ node }: NodeCardProps) {
         )}
       </div>
       <div className="node-details">
-        {node.latitude && node.longitude ? (
-          <span>
-            {node.latitude.toFixed(4)}, {node.longitude.toFixed(4)}
-          </span>
-        ) : (
-          <span style={{ color: 'var(--color-text-muted)' }}>No position</span>
-        )}
-        <span style={{ marginLeft: 'auto' }}>{lastHeardText}</span>
+        <span className="node-info">
+          {roleName && <span className="node-role">{roleName}</span>}
+          {node.snr !== null && (
+            <span className="node-signal" title="SNR">
+              {node.snr > 0 ? '+' : ''}{node.snr.toFixed(1)} dB
+            </span>
+          )}
+          {node.hops_away !== null && node.hops_away > 0 && (
+            <span className="node-hops" title="Hops away">
+              {node.hops_away} hop{node.hops_away !== 1 ? 's' : ''}
+            </span>
+          )}
+        </span>
+        <span className="node-time">{lastHeardText}</span>
       </div>
     </div>
   )

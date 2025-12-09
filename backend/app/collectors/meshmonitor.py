@@ -176,6 +176,11 @@ class MeshMonitorCollector(BaseCollector):
         if role is not None:
             role = str(role)
 
+        # Extract signal info
+        snr = node_data.get("snr")
+        rssi = node_data.get("rssi")
+        hops_away = node_data.get("hopsAway")
+
         if node:
             # Update existing node
             node.node_id = node_id
@@ -191,6 +196,9 @@ class MeshMonitorCollector(BaseCollector):
                     position["time"], tz=timezone.utc
                 )
             node.position_precision_bits = position.get("precisionBits")
+            node.snr = snr
+            node.rssi = rssi
+            node.hops_away = hops_away
             if node_data.get("lastHeard"):
                 node.last_heard = datetime.fromtimestamp(
                     node_data["lastHeard"], tz=timezone.utc
@@ -211,6 +219,9 @@ class MeshMonitorCollector(BaseCollector):
                 longitude=position.get("longitude") or position.get("lon"),
                 altitude=position.get("altitude") or position.get("alt"),
                 position_precision_bits=position.get("precisionBits"),
+                snr=snr,
+                rssi=rssi,
+                hops_away=hops_away,
                 is_licensed=node_data.get("isLicensed", False),
             )
             if position.get("time"):

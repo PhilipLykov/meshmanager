@@ -4,6 +4,18 @@ export interface Source {
   type: 'meshmonitor' | 'mqtt'
   enabled: boolean
   healthy: boolean
+  // MeshMonitor fields
+  url?: string
+  api_token?: string
+  poll_interval_seconds?: number
+  // MQTT fields
+  mqtt_host?: string
+  mqtt_port?: number
+  mqtt_topic_pattern?: string
+  mqtt_use_tls?: boolean
+  // Status
+  last_poll_at?: string
+  last_error?: string
 }
 
 export interface Node {
@@ -14,14 +26,17 @@ export interface Node {
   node_id: string | null
   short_name: string | null
   long_name: string | null
+  hw_model: string | null
+  role: string | null
   latitude: number | null
   longitude: number | null
+  snr: number | null
+  rssi: number | null
+  hops_away: number | null
   last_heard: string | null
 }
 
 export interface NodeDetail extends Node {
-  hw_model: string | null
-  role: string | null
   altitude: number | null
   position_time: string | null
   position_precision_bits: number | null

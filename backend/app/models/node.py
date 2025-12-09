@@ -42,6 +42,11 @@ class Node(Base):
     position_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     position_precision_bits: Mapped[int | None] = mapped_column(Integer)
 
+    # Signal info
+    snr: Mapped[float | None] = mapped_column(Double)
+    rssi: Mapped[int | None] = mapped_column(Integer)
+    hops_away: Mapped[int | None] = mapped_column(Integer)
+
     # Status
     last_heard: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),

@@ -1,0 +1,41 @@
+import { useState } from 'react'
+import { useAuthContext } from '../../contexts/AuthContext'
+import SourcesSettings from './SourcesSettings'
+import UserSettings from './UserSettings'
+
+type SettingsTab = 'sources' | 'user'
+
+export default function SettingsPage() {
+  const { isAdmin } = useAuthContext()
+  const [activeTab, setActiveTab] = useState<SettingsTab>(isAdmin ? 'sources' : 'user')
+
+  return (
+    <div className="settings-page">
+      <div className="settings-header">
+        <h1>Settings</h1>
+      </div>
+
+      <div className="tabs">
+        {isAdmin && (
+          <button
+            className={`tab ${activeTab === 'sources' ? 'active' : ''}`}
+            onClick={() => setActiveTab('sources')}
+          >
+            Sources
+          </button>
+        )}
+        <button
+          className={`tab ${activeTab === 'user' ? 'active' : ''}`}
+          onClick={() => setActiveTab('user')}
+        >
+          User
+        </button>
+      </div>
+
+      <div className="settings-content">
+        {activeTab === 'sources' && isAdmin && <SourcesSettings />}
+        {activeTab === 'user' && <UserSettings />}
+      </div>
+    </div>
+  )
+}
