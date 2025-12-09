@@ -6,7 +6,7 @@ import NodeList from '../NodeList/NodeList'
 import type { Node } from '../../types/api'
 
 export default function Sidebar() {
-  const { enabledSourceIds, toggleSource, enableAllSources, showActiveOnly, setShowActiveOnly } = useDataContext()
+  const { enabledSourceIds, toggleSource, enableAllSources, showActiveOnly, setShowActiveOnly, activeHours } = useDataContext()
   const [showSourceDropdown, setShowSourceDropdown] = useState(false)
   const [searchFilter, setSearchFilter] = useState('')
   const dropdownRef = useRef<HTMLDivElement>(null)
@@ -14,6 +14,7 @@ export default function Sidebar() {
   const { data: sources = [], isLoading: sourcesLoading } = useSources()
   const { data: allNodes = [], isLoading: nodesLoading } = useNodes({
     activeOnly: showActiveOnly,
+    activeHours: showActiveOnly ? activeHours : undefined,
   })
 
   // Initialize enabled sources when sources load

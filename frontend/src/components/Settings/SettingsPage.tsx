@@ -2,12 +2,13 @@ import { useState } from 'react'
 import { useAuthContext } from '../../contexts/AuthContext'
 import SourcesSettings from './SourcesSettings'
 import UserSettings from './UserSettings'
+import DisplaySettings from './DisplaySettings'
 
-type SettingsTab = 'sources' | 'user'
+type SettingsTab = 'display' | 'sources' | 'user'
 
 export default function SettingsPage() {
   const { isAdmin } = useAuthContext()
-  const [activeTab, setActiveTab] = useState<SettingsTab>(isAdmin ? 'sources' : 'user')
+  const [activeTab, setActiveTab] = useState<SettingsTab>('display')
 
   return (
     <div className="settings-page">
@@ -16,6 +17,12 @@ export default function SettingsPage() {
       </div>
 
       <div className="tabs">
+        <button
+          className={`tab ${activeTab === 'display' ? 'active' : ''}`}
+          onClick={() => setActiveTab('display')}
+        >
+          Display
+        </button>
         {isAdmin && (
           <button
             className={`tab ${activeTab === 'sources' ? 'active' : ''}`}
@@ -33,6 +40,7 @@ export default function SettingsPage() {
       </div>
 
       <div className="settings-content">
+        {activeTab === 'display' && <DisplaySettings />}
         {activeTab === 'sources' && isAdmin && <SourcesSettings />}
         {activeTab === 'user' && <UserSettings />}
       </div>

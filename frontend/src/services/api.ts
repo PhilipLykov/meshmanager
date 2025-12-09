@@ -1,12 +1,15 @@
 import axios from 'axios'
 import type {
   AuthStatus,
+  CollectionStatus,
   LoginRequest,
   MeshMonitorSourceCreate,
   MqttSourceCreate,
   Node,
   RegisterRequest,
   Source,
+  Telemetry,
+  TelemetryHistory,
   UserInfo,
 } from '../types/api'
 
@@ -65,11 +68,17 @@ export async function testSource(id: string): Promise<{ success: boolean; messag
   return response.data
 }
 
+export async function syncSource(id: string): Promise<{ message: string; source_id: string }> {
+  const response = await api.post<{ message: string; source_id: string }>(`/api/admin/sources/${id}/sync`)
+  return response.data
+}
+
 // Nodes
-export async function fetchNodes(options?: { sourceId?: string; activeOnly?: boolean }): Promise<Node[]> {
+export async function fetchNodes(options?: { sourceId?: string; activeOnly?: boolean; activeHours?: number }): Promise<Node[]> {
   const params = new URLSearchParams()
   if (options?.sourceId) params.append('source_id', options.sourceId)
   if (options?.activeOnly) params.append('active_only', 'true')
+  if (options?.activeHours) params.append('active_hours', options.activeHours.toString())
 
   const response = await api.get<Node[]>(`/api/nodes?${params.toString()}`)
   return response.data
@@ -80,8 +89,36 @@ export async function fetchNode(id: string): Promise<Node> {
   return response.data
 }
 
+export async function fetchNodesByNodeNum(nodeNum: number): Promise<Node[]> {
+  const response = await api.get<Node[]>(`/api/nodes/by-node-num/${nodeNum}`)
+  return response.data
+}
+
+// Telemetry
+export async function fetchTelemetry(nodeNum: number, hours?: number): Promise<Telemetry[]> {
+  const params = new URLSearchParams()
+  if (hours) params.append('hours', hours.toString())
+
+  const response = await api.get<Telemetry[]>(`/api/telemetry/${nodeNum}?${params.toString()}`)
+  return response.data
+}
+
+export async function fetchTelemetryHistory(nodeNum: number, metric: string, hours?: number): Promise<TelemetryHistory> {
+  const params = new URLSearchParams()
+  if (hours) params.append('hours', hours.toString())
+
+  const response = await api.get<TelemetryHistory>(`/api/telemetry/${nodeNum}/history/${metric}?${params.toString()}`)
+  return response.data
+}
+
 // Health
 export async function fetchHealth(): Promise<{ status: string; database: string; version: string }> {
   const response = await api.get<{ status: string; database: string; version: string }>('/health')
+  return response.data
+}
+
+// Collection Status
+export async function fetchCollectionStatuses(): Promise<Record<string, CollectionStatus>> {
+  const response = await api.get<Record<string, CollectionStatus>>('/api/sources/collection-status')
   return response.data
 }

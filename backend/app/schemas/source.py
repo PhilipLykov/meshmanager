@@ -90,6 +90,7 @@ class SourceResponse(BaseModel):
     # Status
     last_poll_at: datetime | None = None
     last_error: str | None = None
+    remote_version: str | None = None  # Version from remote MeshMonitor instance
     created_at: datetime
     updated_at: datetime
 

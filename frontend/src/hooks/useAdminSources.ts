@@ -1,10 +1,12 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   fetchAdminSources,
+  fetchCollectionStatuses,
   createMeshMonitorSource,
   createMqttSource,
   deleteSource,
   testSource,
+  syncSource,
 } from '../services/api'
 import type { MeshMonitorSourceCreate, MqttSourceCreate } from '../types/api'
 
@@ -55,5 +57,19 @@ export function useDeleteSource() {
 export function useTestSource() {
   return useMutation({
     mutationFn: (id: string) => testSource(id),
+  })
+}
+
+export function useSyncSource() {
+  return useMutation({
+    mutationFn: (id: string) => syncSource(id),
+  })
+}
+
+export function useCollectionStatuses() {
+  return useQuery({
+    queryKey: ['collection-statuses'],
+    queryFn: fetchCollectionStatuses,
+    refetchInterval: 5000, // Refetch every 5 seconds while collecting
   })
 }

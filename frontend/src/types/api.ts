@@ -16,6 +16,7 @@ export interface Source {
   // Status
   last_poll_at?: string
   last_error?: string
+  remote_version?: string  // Version from remote MeshMonitor instance
 }
 
 export interface Node {
@@ -91,4 +92,43 @@ export interface MqttSourceCreate extends SourceCreate {
   mqtt_password?: string
   mqtt_topic_pattern: string
   mqtt_use_tls?: boolean
+}
+
+export interface Telemetry {
+  id: string
+  source_id: string
+  source_name: string | null
+  node_num: number
+  telemetry_type: string
+  battery_level: number | null
+  voltage: number | null
+  channel_utilization: number | null
+  air_util_tx: number | null
+  uptime_seconds: number | null
+  temperature: number | null
+  relative_humidity: number | null
+  barometric_pressure: number | null
+  current: number | null
+  received_at: string
+}
+
+export interface TelemetryHistoryPoint {
+  timestamp: string
+  source_id: string
+  source_name: string | null
+  value: number | null
+}
+
+export interface TelemetryHistory {
+  metric: string
+  unit: string
+  data: TelemetryHistoryPoint[]
+}
+
+export interface CollectionStatus {
+  status: 'idle' | 'collecting' | 'complete' | 'error'
+  current_batch: number
+  max_batches: number
+  total_collected: number
+  last_error: string | null
 }

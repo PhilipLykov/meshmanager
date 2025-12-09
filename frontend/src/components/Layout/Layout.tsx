@@ -2,6 +2,7 @@ import { useState } from 'react'
 import Header from './Header'
 import NavSidebar, { type Page } from './NavSidebar'
 import MapPage from '../Map/MapPage'
+import NodeDetailsPage from '../NodeDetails/NodeDetailsPage'
 import { GraphsPage } from '../Graphs'
 import { SettingsPage } from '../Settings'
 
@@ -12,6 +13,8 @@ export default function Layout() {
     switch (currentPage) {
       case 'map':
         return <MapPage />
+      case 'nodes':
+        return <NodeDetailsPage />
       case 'graphs':
         return <GraphsPage />
       case 'settings':

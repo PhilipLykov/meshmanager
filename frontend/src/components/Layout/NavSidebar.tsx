@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react'
 import { useAuthContext } from '../../contexts/AuthContext'
 
-export type Page = 'map' | 'graphs' | 'settings'
+export type Page = 'map' | 'nodes' | 'graphs' | 'settings'
 
 interface NavSidebarProps {
   currentPage: Page
@@ -15,6 +15,7 @@ export default function NavSidebar({ currentPage, onPageChange }: NavSidebarProp
   const navItems = useMemo(() => {
     const items: { id: Page; label: string; icon: string }[] = [
       { id: 'map', label: 'Map', icon: '🗺️' },
+      { id: 'nodes', label: 'Node Details', icon: '📡' },
       { id: 'graphs', label: 'Graphs', icon: '📊' },
     ]
 

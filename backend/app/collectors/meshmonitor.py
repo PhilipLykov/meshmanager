@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 import httpx
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.collectors.base import BaseCollector
 from app.database import async_session_maker
@@ -15,6 +16,26 @@ from app.schemas.source import SourceTestResult
 logger = logging.getLogger(__name__)
 
 
+class CollectionStatus:
+    """Status of historical data collection."""
+
+    def __init__(self):
+        self.status: str = "idle"  # idle, collecting, complete, error
+        self.current_batch: int = 0
+        self.max_batches: int = 0
+        self.total_collected: int = 0
+        self.last_error: str | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "status": self.status,
+            "current_batch": self.current_batch,
+            "max_batches": self.max_batches,
+            "total_collected": self.total_collected,
+            "last_error": self.last_error,
+        }
+
+
 class MeshMonitorCollector(BaseCollector):
     """Collector for MeshMonitor API sources."""
 
@@ -22,6 +43,8 @@ class MeshMonitorCollector(BaseCollector):
         super().__init__(source)
         self._running = False
         self._task: asyncio.Task | None = None
+        self._historical_task: asyncio.Task | None = None
+        self.collection_status = CollectionStatus()
 
     def _get_headers(self) -> dict[str, str]:
         """Get HTTP headers for API requests."""
@@ -29,6 +52,23 @@ class MeshMonitorCollector(BaseCollector):
         if self.source.api_token:
             headers["Authorization"] = f"Bearer {self.source.api_token}"
         return headers
+
+    async def _get_remote_version(
+        self, client: httpx.AsyncClient, headers: dict
+    ) -> str | None:
+        """Get version from the remote MeshMonitor health endpoint."""
+        try:
+            response = await client.get(
+                f"{self.source.url}/api/health",
+                headers=headers,
+            )
+            if response.status_code == 200:
+                data = response.json()
+                return data.get("version")
+            return None
+        except Exception as e:
+            logger.debug(f"Could not get remote version: {e}")
+            return None
 
     async def test_connection(self) -> SourceTestResult:
         """Test connection to the MeshMonitor API."""
@@ -81,9 +121,13 @@ class MeshMonitorCollector(BaseCollector):
 
         logger.info(f"Collecting from MeshMonitor: {self.source.name}")
 
+        remote_version = None
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 headers = self._get_headers()
+
+                # Fetch version from health endpoint
+                remote_version = await self._get_remote_version(client, headers)
 
                 # Collect nodes
                 await self._collect_nodes(client, headers)
@@ -97,7 +141,7 @@ class MeshMonitorCollector(BaseCollector):
                 # Collect traceroutes
                 await self._collect_traceroutes(client, headers)
 
-            # Update last poll time
+            # Update last poll time and version
             async with async_session_maker() as db:
                 result = await db.execute(
                     select(Source).where(Source.id == self.source.id)
@@ -106,6 +150,8 @@ class MeshMonitorCollector(BaseCollector):
                 if source:
                     source.last_poll_at = datetime.now(timezone.utc)
                     source.last_error = None
+                    if remote_version:
+                        source.remote_version = remote_version
                     await db.commit()
 
             logger.info(f"Collection complete for {self.source.name}")
@@ -298,14 +344,19 @@ class MeshMonitorCollector(BaseCollector):
             response = await client.get(
                 f"{self.source.url}/api/v1/telemetry",
                 headers=headers,
-                params={"limit": 100},
             )
             if response.status_code != 200:
                 logger.warning(f"Failed to fetch telemetry: {response.status_code}")
                 return
 
             data = response.json()
-            telemetry_data = data if isinstance(data, list) else data.get("telemetry", [])
+            # MeshMonitor wraps data in {"success": true, "count": N, "data": [...]}
+            if isinstance(data, dict) and "data" in data:
+                telemetry_data = data.get("data", [])
+            elif isinstance(data, list):
+                telemetry_data = data
+            else:
+                telemetry_data = data.get("telemetry", [])
 
             async with async_session_maker() as db:
                 for telem in telemetry_data:
@@ -316,37 +367,131 @@ class MeshMonitorCollector(BaseCollector):
         except Exception as e:
             logger.error(f"Error collecting telemetry: {e}")
 
-    async def _insert_telemetry(self, db, telem_data: dict) -> None:
-        """Insert telemetry data."""
+    async def _insert_telemetry(self, db, telem_data: dict, skip_duplicates: bool = False) -> bool:
+        """Insert telemetry data using ON CONFLICT DO NOTHING for deduplication.
+
+        Args:
+            db: Database session
+            telem_data: Telemetry data dict
+            skip_duplicates: Unused, kept for backward compatibility.
+                            Deduplication now always uses ON CONFLICT DO NOTHING.
+
+        Returns:
+            True if record was inserted, False if skipped (duplicate)
+        """
+        from uuid import uuid4
+
         from app.models.telemetry import TelemetryType
 
         node_num = telem_data.get("nodeNum") or telem_data.get("from")
         if not node_num:
-            return
+            return False
 
-        telem_type_str = telem_data.get("type", "device").lower()
-        try:
-            telem_type = TelemetryType(telem_type_str)
-        except ValueError:
+        # MeshMonitor uses flat format with telemetryType field
+        # e.g., {"nodeNum": 123, "telemetryType": "batteryLevel", "value": 86, "timestamp": ...}
+        telem_type_field = telem_data.get("telemetryType", "")
+        value = telem_data.get("value")
+
+        # Skip position telemetry (latitude, longitude, altitude) - those are handled in nodes
+        if telem_type_field in ("latitude", "longitude", "altitude"):
+            return False
+
+        # Determine telemetry type based on the field
+        if telem_type_field in ("batteryLevel", "voltage", "channelUtilization", "airUtilTx", "uptimeSeconds"):
             telem_type = TelemetryType.DEVICE
+        elif telem_type_field in ("temperature", "relativeHumidity", "barometricPressure"):
+            telem_type = TelemetryType.ENVIRONMENT
+        elif telem_type_field in ("snr_local", "snr_remote", "rssi"):
+            telem_type = TelemetryType.DEVICE  # Signal metrics go with device
+        else:
+            # Check old nested format
+            telem_type_str = telem_data.get("type", "device").lower()
+            try:
+                telem_type = TelemetryType(telem_type_str)
+            except ValueError:
+                telem_type = TelemetryType.DEVICE
 
-        device_metrics = telem_data.get("deviceMetrics", {}) or {}
-        env_metrics = telem_data.get("environmentMetrics", {}) or {}
+        # Handle MeshMonitor flat format
+        if telem_type_field and value is not None:
+            # Get timestamp from MeshMonitor data
+            timestamp_ms = telem_data.get("timestamp") or telem_data.get("createdAt")
+            received_at = datetime.now(timezone.utc)
+            if timestamp_ms:
+                received_at = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
 
-        telemetry = Telemetry(
-            source_id=self.source.id,
-            node_num=node_num,
-            telemetry_type=telem_type,
-            battery_level=device_metrics.get("batteryLevel"),
-            voltage=device_metrics.get("voltage"),
-            channel_utilization=device_metrics.get("channelUtilization"),
-            air_util_tx=device_metrics.get("airUtilTx"),
-            uptime_seconds=device_metrics.get("uptimeSeconds"),
-            temperature=env_metrics.get("temperature"),
-            relative_humidity=env_metrics.get("relativeHumidity"),
-            barometric_pressure=env_metrics.get("barometricPressure"),
-        )
-        db.add(telemetry)
+            # Use metric_name for deduplication (the telemetryType field)
+            metric_name = telem_type_field
+
+            # Build values dict for the insert
+            values = {
+                "id": str(uuid4()),
+                "source_id": self.source.id,
+                "node_num": node_num,
+                "metric_name": metric_name,
+                "telemetry_type": telem_type,
+                "received_at": received_at,
+                "battery_level": int(value) if telem_type_field == "batteryLevel" else None,
+                "voltage": float(value) if telem_type_field == "voltage" else None,
+                "channel_utilization": float(value) if telem_type_field == "channelUtilization" else None,
+                "air_util_tx": float(value) if telem_type_field == "airUtilTx" else None,
+                "uptime_seconds": int(value) if telem_type_field == "uptimeSeconds" else None,
+                "temperature": float(value) if telem_type_field == "temperature" else None,
+                "relative_humidity": float(value) if telem_type_field == "relativeHumidity" else None,
+                "barometric_pressure": float(value) if telem_type_field == "barometricPressure" else None,
+                "snr_local": float(value) if telem_type_field == "snr_local" else None,
+                "snr_remote": float(value) if telem_type_field == "snr_remote" else None,
+                "rssi": float(value) if telem_type_field == "rssi" else None,
+            }
+
+            # Use PostgreSQL INSERT ... ON CONFLICT DO NOTHING
+            stmt = pg_insert(Telemetry).values(**values).on_conflict_do_nothing(
+                index_elements=["source_id", "node_num", "received_at", "metric_name"]
+            )
+            result = await db.execute(stmt)
+            return result.rowcount > 0
+        else:
+            # Handle old nested format (deviceMetrics, environmentMetrics)
+            # For this format, insert each metric as a separate record
+            device_metrics = telem_data.get("deviceMetrics", {}) or {}
+            env_metrics = telem_data.get("environmentMetrics", {}) or {}
+
+            if not device_metrics and not env_metrics:
+                return False
+
+            inserted = False
+            received_at = datetime.now(timezone.utc)
+
+            # Insert device metrics one by one
+            metric_mapping = [
+                ("batteryLevel", "battery_level", device_metrics.get("batteryLevel")),
+                ("voltage", "voltage", device_metrics.get("voltage")),
+                ("channelUtilization", "channel_utilization", device_metrics.get("channelUtilization")),
+                ("airUtilTx", "air_util_tx", device_metrics.get("airUtilTx")),
+                ("uptimeSeconds", "uptime_seconds", device_metrics.get("uptimeSeconds")),
+                ("temperature", "temperature", env_metrics.get("temperature")),
+                ("relativeHumidity", "relative_humidity", env_metrics.get("relativeHumidity")),
+                ("barometricPressure", "barometric_pressure", env_metrics.get("barometricPressure")),
+            ]
+
+            for metric_name, column_name, metric_value in metric_mapping:
+                if metric_value is not None:
+                    values = {
+                        "id": str(uuid4()),
+                        "source_id": self.source.id,
+                        "node_num": node_num,
+                        "metric_name": metric_name,
+                        "telemetry_type": telem_type,
+                        "received_at": received_at,
+                        column_name: metric_value,
+                    }
+                    stmt = pg_insert(Telemetry).values(**values).on_conflict_do_nothing(
+                        index_elements=["source_id", "node_num", "received_at", "metric_name"]
+                    )
+                    result = await db.execute(stmt)
+                    if result.rowcount > 0:
+                        inserted = True
+
+            return inserted
 
     async def _collect_traceroutes(
         self, client: httpx.AsyncClient, headers: dict
@@ -386,14 +531,293 @@ class MeshMonitorCollector(BaseCollector):
         )
         db.add(traceroute)
 
-    async def start(self) -> None:
-        """Start periodic collection."""
+    async def collect_historical_batch(
+        self, batch_size: int = 500, delay_seconds: float = 5.0, max_batches: int = 20
+    ) -> None:
+        """Collect historical data in batches to avoid rate limiting.
+
+        Args:
+            batch_size: Number of records per batch
+            delay_seconds: Delay between batches
+            max_batches: Maximum number of batches to fetch
+        """
+        if not self.source.url:
+            logger.warning(f"Source {self.source.name} has no URL configured")
+            return
+
+        logger.info(
+            f"Starting historical data collection for {self.source.name} "
+            f"(batch_size={batch_size}, delay={delay_seconds}s, max_batches={max_batches})"
+        )
+
+        # Initialize collection status
+        self.collection_status.status = "collecting"
+        self.collection_status.current_batch = 0
+        self.collection_status.max_batches = max_batches
+        self.collection_status.total_collected = 0
+        self.collection_status.last_error = None
+
+        total_collected = 0
+        offset = 0
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                headers = self._get_headers()
+
+                for batch_num in range(max_batches):
+                    if not self._running:
+                        logger.info(f"Historical collection stopped for {self.source.name}")
+                        self.collection_status.status = "complete"
+                        break
+
+                    # Update status
+                    self.collection_status.current_batch = batch_num + 1
+
+                    # Fetch a batch of telemetry
+                    count = await self._collect_telemetry_batch(
+                        client, headers, limit=batch_size, offset=offset
+                    )
+
+                    if count == 0:
+                        logger.info(f"No more historical data for {self.source.name}")
+                        self.collection_status.status = "complete"
+                        break
+
+                    total_collected += count
+                    self.collection_status.total_collected = total_collected
+                    offset += batch_size
+
+                    logger.debug(
+                        f"Historical batch {batch_num + 1}: collected {count} records "
+                        f"(total: {total_collected}) from {self.source.name}"
+                    )
+
+                    # Delay before next batch to avoid rate limiting
+                    if batch_num < max_batches - 1:
+                        await asyncio.sleep(delay_seconds)
+                else:
+                    # Completed all batches
+                    self.collection_status.status = "complete"
+
+            logger.info(
+                f"Historical data collection complete for {self.source.name}: "
+                f"{total_collected} telemetry records"
+            )
+
+        except Exception as e:
+            logger.error(f"Historical collection error for {self.source.name}: {e}")
+            self.collection_status.status = "error"
+            self.collection_status.last_error = str(e)
+
+    async def _get_telemetry_count(
+        self, client: httpx.AsyncClient, headers: dict
+    ) -> int | None:
+        """Get total telemetry count from the API.
+
+        Returns the total count or None if the endpoint is not available.
+        """
+        try:
+            response = await client.get(
+                f"{self.source.url}/api/v1/telemetry/count",
+                headers=headers,
+            )
+            if response.status_code == 200:
+                data = response.json()
+                if isinstance(data, dict) and "count" in data:
+                    return data["count"]
+            return None
+        except Exception as e:
+            logger.debug(f"Could not get telemetry count: {e}")
+            return None
+
+    async def sync_all_data(
+        self, batch_size: int = 500, delay_seconds: float = 5.0
+    ) -> None:
+        """Sync all data from the source, skipping duplicates.
+
+        This fetches ALL telemetry data (no batch limit) and inserts only
+        new records that don't already exist in the database.
+
+        Args:
+            batch_size: Number of records per batch
+            delay_seconds: Delay between batches to avoid rate limiting
+        """
+        if not self.source.url:
+            logger.warning(f"Source {self.source.name} has no URL configured")
+            return
+
+        logger.info(
+            f"Starting full data sync for {self.source.name} "
+            f"(batch_size={batch_size}, delay={delay_seconds}s)"
+        )
+
+        # Initialize collection status
+        self.collection_status.status = "collecting"
+        self.collection_status.current_batch = 0
+        self.collection_status.max_batches = 0  # Will be set after getting count
+        self.collection_status.total_collected = 0
+        self.collection_status.last_error = None
+
+        total_fetched = 0
+        total_inserted = 0
+        offset = 0
+        batch_num = 0
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                headers = self._get_headers()
+
+                # Try to get total count for progress tracking
+                total_count = await self._get_telemetry_count(client, headers)
+                if total_count is not None:
+                    self.collection_status.max_batches = (total_count + batch_size - 1) // batch_size
+                    logger.info(
+                        f"Sync will process ~{total_count} records in "
+                        f"~{self.collection_status.max_batches} batches"
+                    )
+
+                while self._running:
+                    batch_num += 1
+                    self.collection_status.current_batch = batch_num
+
+                    # Fetch batch
+                    params = {"limit": batch_size, "offset": offset}
+                    response = await client.get(
+                        f"{self.source.url}/api/v1/telemetry",
+                        headers=headers,
+                        params=params,
+                    )
+
+                    if response.status_code != 200:
+                        logger.warning(f"Failed to fetch telemetry: {response.status_code}")
+                        self.collection_status.status = "error"
+                        self.collection_status.last_error = f"HTTP {response.status_code}"
+                        return
+
+                    data = response.json()
+                    if isinstance(data, dict) and "data" in data:
+                        telemetry_data = data.get("data", [])
+                    elif isinstance(data, list):
+                        telemetry_data = data
+                    else:
+                        telemetry_data = data.get("telemetry", [])
+
+                    if not telemetry_data:
+                        logger.info(f"No more data for {self.source.name}")
+                        break
+
+                    total_fetched += len(telemetry_data)
+                    batch_inserted = 0
+
+                    # Insert with duplicate checking
+                    async with async_session_maker() as db:
+                        for telem in telemetry_data:
+                            inserted = await self._insert_telemetry(
+                                db, telem, skip_duplicates=True
+                            )
+                            if inserted:
+                                batch_inserted += 1
+                        await db.commit()
+
+                    total_inserted += batch_inserted
+                    self.collection_status.total_collected = total_inserted
+                    offset += batch_size
+
+                    logger.debug(
+                        f"Sync batch {batch_num}: fetched {len(telemetry_data)}, "
+                        f"inserted {batch_inserted} (total: {total_inserted}) "
+                        f"from {self.source.name}"
+                    )
+
+                    # Delay before next batch
+                    await asyncio.sleep(delay_seconds)
+
+            self.collection_status.status = "complete"
+            self.collection_status.max_batches = batch_num
+            logger.info(
+                f"Full sync complete for {self.source.name}: "
+                f"fetched {total_fetched}, inserted {total_inserted} new records"
+            )
+
+        except Exception as e:
+            logger.error(f"Sync error for {self.source.name}: {e}")
+            self.collection_status.status = "error"
+            self.collection_status.last_error = str(e)
+
+    async def _collect_telemetry_batch(
+        self, client: httpx.AsyncClient, headers: dict, limit: int, offset: int = 0
+    ) -> int:
+        """Collect a batch of telemetry from the API.
+
+        Returns the number of records collected.
+        """
+        try:
+            params = {"limit": limit}
+            if offset > 0:
+                params["offset"] = offset
+
+            response = await client.get(
+                f"{self.source.url}/api/v1/telemetry",
+                headers=headers,
+                params=params,
+            )
+            if response.status_code != 200:
+                logger.warning(f"Failed to fetch telemetry batch: {response.status_code}")
+                return 0
+
+            data = response.json()
+            # MeshMonitor wraps data in {"success": true, "count": N, "data": [...]}
+            if isinstance(data, dict) and "data" in data:
+                telemetry_data = data.get("data", [])
+            elif isinstance(data, list):
+                telemetry_data = data
+            else:
+                telemetry_data = data.get("telemetry", [])
+
+            if not telemetry_data:
+                return 0
+
+            async with async_session_maker() as db:
+                for telem in telemetry_data:
+                    await self._insert_telemetry(db, telem)
+                await db.commit()
+
+            return len(telemetry_data)
+        except Exception as e:
+            logger.error(f"Error collecting telemetry batch: {e}")
+            return 0
+
+    async def start(self, collect_history: bool = False) -> None:
+        """Start periodic collection.
+
+        Args:
+            collect_history: If True, fetch historical data in the background
+                           while also starting regular polling.
+        """
         if self._running:
             return
 
         self._running = True
         self._task = asyncio.create_task(self._poll_loop())
         logger.info(f"Started MeshMonitor collector: {self.source.name}")
+
+        # Start historical collection in background if requested
+        if collect_history:
+            self._historical_task = asyncio.create_task(self._collect_historical_background())
+
+    async def _collect_historical_background(self) -> None:
+        """Background task for historical data collection."""
+        try:
+            # Wait a moment for the source to be fully committed and first poll to complete
+            await asyncio.sleep(10)
+            # Collect historical data in batches with delays
+            await self.collect_historical_batch(
+                batch_size=500,
+                delay_seconds=10.0,  # 10 seconds between batches
+                max_batches=50,      # Up to 25,000 records total
+            )
+        except Exception as e:
+            logger.error(f"Background historical collection failed: {e}")
 
     async def _poll_loop(self) -> None:
         """Polling loop."""

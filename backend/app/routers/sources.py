@@ -195,3 +195,56 @@ async def test_source(
 
         collector = MqttCollector(source)
         return await collector.test_connection()
+
+
+@router.post("/{source_id}/sync")
+async def sync_source_data(
+    source_id: str,
+    db: AsyncSession = Depends(get_db),
+    _admin: None = Depends(require_admin),
+) -> dict:
+    """Trigger full data sync for a source, skipping duplicates."""
+    result = await db.execute(select(Source).where(Source.id == source_id))
+    source = result.scalar()
+    if not source:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    if source.type != SourceType.MESHMONITOR:
+        raise HTTPException(status_code=400, detail="Sync only supported for MeshMonitor sources")
+
+    success = await collector_manager.trigger_sync(source_id)
+    if success:
+        return {"message": "Sync started", "source_id": source_id}
+    else:
+        raise HTTPException(status_code=500, detail="Failed to start sync")
+
+
+@router.post("/{source_id}/collect-history")
+async def collect_historical_data(
+    source_id: str,
+    db: AsyncSession = Depends(get_db),
+    _admin: None = Depends(require_admin),
+) -> dict:
+    """Trigger historical data collection for a source."""
+    result = await db.execute(select(Source).where(Source.id == source_id))
+    source = result.scalar()
+    if not source:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    if source.type != SourceType.MESHMONITOR:
+        raise HTTPException(status_code=400, detail="Historical collection only supported for MeshMonitor sources")
+
+    success = await collector_manager.trigger_historical_collection(source_id)
+    if success:
+        return {"message": "Historical collection started", "source_id": source_id}
+    else:
+        raise HTTPException(status_code=500, detail="Failed to start historical collection")
+
+
+@router.post("/collect-history-all")
+async def collect_historical_data_all(
+    _admin: None = Depends(require_admin),
+) -> dict:
+    """Trigger historical data collection for all MeshMonitor sources."""
+    count = await collector_manager.trigger_historical_collection_all()
+    return {"message": f"Historical collection started for {count} sources"}

@@ -1,11 +1,78 @@
 import { useState } from 'react'
-import { useAdminSources, useDeleteSource, useTestSource } from '../../hooks/useAdminSources'
+import { useAdminSources, useDeleteSource, useTestSource, useSyncSource, useCollectionStatuses } from '../../hooks/useAdminSources'
 import { AddSourceForm } from '../Admin/AddSourceForm'
+import type { CollectionStatus } from '../../types/api'
+
+const BATCH_DELAY_SECONDS = 5
+
+function formatEta(seconds: number): string {
+  if (seconds <= 0) return ''
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  const secs = seconds % 60
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`
+  } else if (minutes > 0) {
+    return `${minutes}m ${secs}s`
+  }
+  return `${secs}s`
+}
+
+function CollectionStatusIndicator({ status }: { status: CollectionStatus | undefined }) {
+  if (!status) {
+    return null
+  }
+
+  if (status.status === 'collecting') {
+    const progress = status.max_batches > 0
+      ? Math.round((status.current_batch / status.max_batches) * 100)
+      : 0
+    const remainingBatches = status.max_batches - status.current_batch
+    const etaSeconds = remainingBatches * BATCH_DELAY_SECONDS
+    const etaText = status.max_batches > 0 ? formatEta(etaSeconds) : ''
+    return (
+      <div className="collection-status collecting">
+        <div className="collection-progress-bar">
+          <div className="collection-progress-fill" style={{ width: `${progress}%` }} />
+        </div>
+        <span className="collection-status-text">
+          Collecting... {status.current_batch}/{status.max_batches} ({status.total_collected} records)
+          {etaText && <span className="collection-eta"> • ETA: {etaText}</span>}
+        </span>
+      </div>
+    )
+  }
+
+  if (status.status === 'complete') {
+    return (
+      <div className="collection-status complete">
+        <span className="collection-check">✓</span>
+        <span className="collection-status-text">Up to date</span>
+      </div>
+    )
+  }
+
+  if (status.status === 'error') {
+    return (
+      <div className="collection-status error">
+        <span className="collection-error">✕</span>
+        <span className="collection-status-text" title={status.last_error || 'Unknown error'}>
+          Collection error
+        </span>
+      </div>
+    )
+  }
+
+  // idle status - don't show anything
+  return null
+}
 
 export default function SourcesSettings() {
   const { data: sources = [], isLoading } = useAdminSources()
+  const { data: collectionStatuses = {} } = useCollectionStatuses()
   const deleteMutation = useDeleteSource()
   const testMutation = useTestSource()
+  const syncMutation = useSyncSource()
   const [showAddForm, setShowAddForm] = useState(false)
   const [testResults, setTestResults] = useState<Record<string, { success: boolean; message: string }>>({})
 
@@ -24,6 +91,14 @@ export default function SourcesSettings() {
         ...prev,
         [id]: { success: false, message: error instanceof Error ? error.message : 'Test failed' },
       }))
+    }
+  }
+
+  const handleSync = async (id: string) => {
+    try {
+      await syncMutation.mutateAsync(id)
+    } catch (error) {
+      console.error('Sync failed:', error)
     }
   }
 
@@ -63,6 +138,9 @@ export default function SourcesSettings() {
                   <span className={`source-status ${source.healthy ? 'healthy' : 'unhealthy'}`} />
                   <span className="source-name">{source.name}</span>
                   <span className="badge">{source.type}</span>
+                  {source.remote_version && (
+                    <span className="badge badge-info">v{source.remote_version}</span>
+                  )}
                 </div>
                 <div className="source-card-status">
                   <span className={`badge ${source.enabled ? 'badge-success' : 'badge-warning'}`}>
@@ -85,6 +163,8 @@ export default function SourcesSettings() {
                 </div>
               )}
 
+              <CollectionStatusIndicator status={collectionStatuses[source.id]} />
+
               {testResults[source.id] && (
                 <div className={`source-test-result ${testResults[source.id].success ? 'success' : 'error'}`}>
                   {testResults[source.id].message}
@@ -102,6 +182,15 @@ export default function SourcesSettings() {
                 >
                   {testMutation.isPending ? 'Testing...' : 'Test Connection'}
                 </button>
+                {source.type === 'meshmonitor' && (
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => handleSync(source.id)}
+                    disabled={syncMutation.isPending || collectionStatuses[source.id]?.status === 'collecting'}
+                  >
+                    {collectionStatuses[source.id]?.status === 'collecting' ? 'Syncing...' : 'Sync Data'}
+                  </button>
+                )}
                 <button
                   className="btn btn-danger btn-sm"
                   onClick={() => handleDelete(source.id, source.name)}

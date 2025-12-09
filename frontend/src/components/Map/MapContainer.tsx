@@ -72,12 +72,13 @@ function MapCenterHandler({ node }: { node: Node | null }) {
 }
 
 export default function MapContainer() {
-  const { enabledSourceIds, showActiveOnly, selectedNode, setSelectedNode } = useDataContext()
+  const { enabledSourceIds, showActiveOnly, activeHours, selectedNode, setSelectedNode } = useDataContext()
   const [tilesetId, setTilesetId] = useState<TilesetId>(DEFAULT_TILESET_ID)
   const tileset = getTilesetById(tilesetId)
 
   const { data: allNodes = [] } = useNodes({
     activeOnly: showActiveOnly,
+    activeHours: showActiveOnly ? activeHours : undefined,
   })
 
   // Filter by enabled sources and deduplicate (same logic as Sidebar)

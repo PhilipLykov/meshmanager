@@ -4,7 +4,7 @@ import enum
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import BigInteger, DateTime, Enum, Float, ForeignKey, Integer
+from sqlalchemy import BigInteger, DateTime, Enum, Float, ForeignKey, Index, Integer, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -24,6 +24,16 @@ class Telemetry(Base):
     """Telemetry data from a node."""
 
     __tablename__ = "telemetry"
+    __table_args__ = (
+        Index(
+            "ix_telemetry_unique_metric",
+            "source_id",
+            "node_num",
+            "received_at",
+            "metric_name",
+            unique=True,
+        ),
+    )
 
     id: Mapped[str] = mapped_column(
         UUID(as_uuid=False),
@@ -37,6 +47,9 @@ class Telemetry(Base):
         index=True,
     )
     node_num: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+
+    # Metric identifier for deduplication (e.g., "battery_level", "voltage", etc.)
+    metric_name: Mapped[str | None] = mapped_column(String(50), index=True)
 
     telemetry_type: Mapped[TelemetryType] = mapped_column(
         Enum(TelemetryType),
@@ -58,6 +71,11 @@ class Telemetry(Base):
 
     # Power metrics
     current: Mapped[float | None] = mapped_column(Float)  # mA
+
+    # Signal metrics
+    snr_local: Mapped[float | None] = mapped_column(Float)  # dB - local SNR
+    snr_remote: Mapped[float | None] = mapped_column(Float)  # dB - remote SNR
+    rssi: Mapped[float | None] = mapped_column(Float)  # dBm - RSSI
 
     # Timestamp
     received_at: Mapped[datetime] = mapped_column(

@@ -9,6 +9,8 @@ interface DataContextValue {
   enableAllSources: (sourceIds: string[]) => void
   showActiveOnly: boolean
   setShowActiveOnly: (active: boolean) => void
+  activeHours: number
+  setActiveHours: (hours: number) => void
 }
 
 const DataContext = createContext<DataContextValue | null>(null)
@@ -17,6 +19,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [selectedNode, setSelectedNode] = useState<Node | null>(null)
   const [enabledSourceIds, setEnabledSourceIds] = useState<Set<string>>(new Set())
   const [showActiveOnly, setShowActiveOnly] = useState(false)
+  const [activeHours, setActiveHours] = useState(24)
 
   const toggleSource = (sourceId: string) => {
     setEnabledSourceIds((prev) => {
@@ -42,6 +45,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
     enableAllSources,
     showActiveOnly,
     setShowActiveOnly,
+    activeHours,
+    setActiveHours,
   }
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>

@@ -7,8 +7,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models import Node, Source
+from app.models import Node, Source, Telemetry
 from app.schemas.node import NodeResponse, NodeSummary
+from app.schemas.telemetry import TelemetryResponse, TelemetryHistory, TelemetryHistoryPoint
+from app.services.collector_manager import collector_manager
 
 router = APIRouter(prefix="/api", tags=["ui"])
 
@@ -47,7 +49,8 @@ async def list_sources_public(
 async def list_nodes(
     db: AsyncSession = Depends(get_db),
     source_id: str | None = Query(default=None, description="Filter by source ID"),
-    active_only: bool = Query(default=False, description="Only show nodes heard in last hour"),
+    active_only: bool = Query(default=False, description="Only show recently active nodes"),
+    active_hours: int = Query(default=1, ge=1, le=8760, description="Hours to consider a node active (1-8760)"),
 ) -> list[NodeSummary]:
     """List all nodes across all sources."""
     query = select(Node, Source.name.label("source_name")).join(Source)
@@ -56,8 +59,8 @@ async def list_nodes(
         query = query.where(Node.source_id == source_id)
 
     if active_only:
-        one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
-        query = query.where(Node.last_heard >= one_hour_ago)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=active_hours)
+        query = query.where(Node.last_heard >= cutoff)
 
     query = query.order_by(Node.last_heard.desc().nullslast())
 
@@ -73,8 +76,49 @@ async def list_nodes(
             node_id=node.node_id,
             short_name=node.short_name,
             long_name=node.long_name,
+            hw_model=node.hw_model,
+            role=node.role,
             latitude=node.latitude,
             longitude=node.longitude,
+            snr=node.snr,
+            rssi=node.rssi,
+            hops_away=node.hops_away,
+            last_heard=node.last_heard,
+        )
+        for node, source_name in rows
+    ]
+
+
+@router.get("/nodes/by-node-num/{node_num}")
+async def get_nodes_by_node_num(
+    node_num: int,
+    db: AsyncSession = Depends(get_db),
+) -> list[NodeSummary]:
+    """Get all node records across sources for a given node_num."""
+    result = await db.execute(
+        select(Node, Source.name.label("source_name"))
+        .join(Source)
+        .where(Node.node_num == node_num)
+        .order_by(Node.last_heard.desc().nullslast())
+    )
+    rows = result.all()
+
+    return [
+        NodeSummary(
+            id=node.id,
+            source_id=node.source_id,
+            source_name=source_name,
+            node_num=node.node_num,
+            node_id=node.node_id,
+            short_name=node.short_name,
+            long_name=node.long_name,
+            hw_model=node.hw_model,
+            role=node.role,
+            latitude=node.latitude,
+            longitude=node.longitude,
+            snr=node.snr,
+            rssi=node.rssi,
+            hops_away=node.hops_away,
             last_heard=node.last_heard,
         )
         for node, source_name in rows
@@ -102,3 +146,117 @@ async def get_node(
     response = NodeResponse.model_validate(node)
     response.source_name = source_name
     return response
+
+
+@router.get("/telemetry/{node_num}")
+async def get_telemetry(
+    node_num: int,
+    db: AsyncSession = Depends(get_db),
+    hours: int = Query(default=24, ge=1, le=168, description="Hours of history to fetch"),
+) -> list[TelemetryResponse]:
+    """Get recent telemetry for a node across all sources."""
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+    result = await db.execute(
+        select(Telemetry, Source.name.label("source_name"))
+        .join(Source)
+        .where(Telemetry.node_num == node_num)
+        .where(Telemetry.received_at >= cutoff)
+        .order_by(Telemetry.received_at.desc())
+    )
+    rows = result.all()
+
+    return [
+        TelemetryResponse(
+            id=t.id,
+            source_id=t.source_id,
+            source_name=source_name,
+            node_num=t.node_num,
+            telemetry_type=t.telemetry_type.value,
+            battery_level=t.battery_level,
+            voltage=t.voltage,
+            channel_utilization=t.channel_utilization,
+            air_util_tx=t.air_util_tx,
+            uptime_seconds=t.uptime_seconds,
+            temperature=t.temperature,
+            relative_humidity=t.relative_humidity,
+            barometric_pressure=t.barometric_pressure,
+            current=t.current,
+            snr_local=t.snr_local,
+            snr_remote=t.snr_remote,
+            rssi=t.rssi,
+            received_at=t.received_at,
+        )
+        for t, source_name in rows
+    ]
+
+
+@router.get("/telemetry/{node_num}/history/{metric}")
+async def get_telemetry_history(
+    node_num: int,
+    metric: str,
+    db: AsyncSession = Depends(get_db),
+    hours: int = Query(default=24, ge=1, le=168, description="Hours of history to fetch"),
+) -> TelemetryHistory:
+    """Get historical data for a specific telemetry metric."""
+    # Validate metric name
+    valid_metrics = {
+        "battery_level": ("Battery Level", "%"),
+        "voltage": ("Voltage", "V"),
+        "channel_utilization": ("Channel Utilization", "%"),
+        "air_util_tx": ("Air Utilization TX", "%"),
+        "uptime_seconds": ("Uptime", "s"),
+        "temperature": ("Temperature", "°C"),
+        "relative_humidity": ("Humidity", "%"),
+        "barometric_pressure": ("Pressure", "hPa"),
+        "current": ("Current", "mA"),
+        "snr_local": ("SNR (Local)", "dB"),
+        "snr_remote": ("SNR (Remote)", "dB"),
+        "rssi": ("RSSI", "dBm"),
+    }
+
+    if metric not in valid_metrics:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail=f"Invalid metric: {metric}")
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+    result = await db.execute(
+        select(Telemetry, Source.name.label("source_name"))
+        .join(Source)
+        .where(Telemetry.node_num == node_num)
+        .where(Telemetry.received_at >= cutoff)
+        .order_by(Telemetry.received_at.asc())
+    )
+    rows = result.all()
+
+    # Extract the metric values
+    data = []
+    for t, source_name in rows:
+        value = getattr(t, metric, None)
+        if value is not None:
+            data.append(
+                TelemetryHistoryPoint(
+                    timestamp=t.received_at,
+                    source_id=t.source_id,
+                    source_name=source_name,
+                    value=float(value),
+                )
+            )
+
+    metric_name, unit = valid_metrics[metric]
+    return TelemetryHistory(metric=metric_name, unit=unit, data=data)
+
+
+@router.get("/sources/collection-status")
+async def get_collection_statuses() -> dict[str, dict]:
+    """Get collection status for all sources.
+
+    Returns a dict mapping source_id to status info:
+    - status: "idle" | "collecting" | "complete" | "error"
+    - current_batch: current batch number (1-based)
+    - max_batches: total batches to collect
+    - total_collected: records collected so far
+    - last_error: error message if status is "error"
+    """
+    return collector_manager.get_all_collection_statuses()

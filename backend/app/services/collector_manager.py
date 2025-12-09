@@ -42,8 +42,13 @@ class CollectorManager:
             for source in sources:
                 await self._start_collector(source)
 
-    async def _start_collector(self, source: Source) -> None:
-        """Start a collector for a source."""
+    async def _start_collector(self, source: Source, collect_history: bool = False) -> None:
+        """Start a collector for a source.
+
+        Args:
+            source: The source to start a collector for
+            collect_history: If True, collect historical data in the background
+        """
         if source.id in self._collectors:
             return
 
@@ -56,7 +61,12 @@ class CollectorManager:
             return
 
         self._collectors[source.id] = collector
-        await collector.start()
+
+        # MeshMonitor supports historical collection
+        if source.type == SourceType.MESHMONITOR and collect_history:
+            await collector.start(collect_history=True)
+        else:
+            await collector.start()
 
     async def stop(self) -> None:
         """Stop all collectors."""
@@ -72,9 +82,13 @@ class CollectorManager:
         logger.info("Stopped all collectors")
 
     async def add_source(self, source: Source) -> None:
-        """Add and start a collector for a new source."""
+        """Add and start a collector for a new source.
+
+        For new sources, historical data collection is triggered automatically.
+        """
         if source.enabled:
-            await self._start_collector(source)
+            # New sources should collect historical data
+            await self._start_collector(source, collect_history=True)
 
     async def remove_source(self, source_id: str) -> None:
         """Stop and remove a collector."""
@@ -94,6 +108,86 @@ class CollectorManager:
     def get_collector(self, source_id: str) -> BaseCollector | None:
         """Get a collector by source ID."""
         return self._collectors.get(source_id)
+
+    def get_collection_status(self, source_id: str) -> dict | None:
+        """Get collection status for a source.
+
+        Returns status dict or None if source not found or doesn't support status.
+        """
+        collector = self._collectors.get(source_id)
+        if not collector:
+            return None
+
+        if hasattr(collector, 'collection_status'):
+            return collector.collection_status.to_dict()
+        return None
+
+    def get_all_collection_statuses(self) -> dict[str, dict]:
+        """Get collection status for all sources."""
+        statuses = {}
+        for source_id, collector in self._collectors.items():
+            if hasattr(collector, 'collection_status'):
+                statuses[source_id] = collector.collection_status.to_dict()
+        return statuses
+
+    async def trigger_sync(self, source_id: str) -> bool:
+        """Trigger full data sync for a source.
+
+        Returns True if sync was started, False if source not found.
+        """
+        collector = self._collectors.get(source_id)
+        if not collector:
+            return False
+
+        # Only MeshMonitor collectors support sync
+        if hasattr(collector, 'sync_all_data'):
+            import asyncio
+            asyncio.create_task(collector.sync_all_data(
+                batch_size=500,
+                delay_seconds=5.0,
+            ))
+            logger.info(f"Triggered full sync for source {source_id}")
+            return True
+        return False
+
+    async def trigger_historical_collection(self, source_id: str) -> bool:
+        """Trigger historical data collection for an existing source.
+
+        Returns True if collection was started, False if source not found.
+        """
+        collector = self._collectors.get(source_id)
+        if not collector:
+            return False
+
+        # Only MeshMonitor collectors support historical collection
+        if hasattr(collector, 'collect_historical_batch'):
+            import asyncio
+            asyncio.create_task(collector.collect_historical_batch(
+                batch_size=500,
+                delay_seconds=10.0,
+                max_batches=50,
+            ))
+            logger.info(f"Triggered historical collection for source {source_id}")
+            return True
+        return False
+
+    async def trigger_historical_collection_all(self) -> int:
+        """Trigger historical collection for all MeshMonitor sources.
+
+        Returns the number of sources that started collection.
+        """
+        count = 0
+        for source_id, collector in self._collectors.items():
+            if hasattr(collector, 'collect_historical_batch'):
+                import asyncio
+                asyncio.create_task(collector.collect_historical_batch(
+                    batch_size=500,
+                    delay_seconds=10.0,
+                    max_batches=50,
+                ))
+                logger.info(f"Triggered historical collection for source {source_id}")
+                count += 1
+        return count
 
 
 # Global collector manager instance
