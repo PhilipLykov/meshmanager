@@ -45,10 +45,44 @@ To stop:
 docker compose -f docker-compose.dev.yml down
 ```
 
-### Production
+### Production (Pre-built Images)
 
-1. Copy the example environment file and configure it:
+The easiest way to deploy MeshManager is using pre-built Docker images:
+
+1. Download the required files:
    ```bash
+   mkdir meshmanager && cd meshmanager
+   curl -O https://raw.githubusercontent.com/Yeraze/meshmanager/main/docker-compose.prebuilt.yml
+   curl -O https://raw.githubusercontent.com/Yeraze/meshmanager/main/docker/nginx.conf
+   curl -O https://raw.githubusercontent.com/Yeraze/meshmanager/main/.env.example
+   ```
+
+2. Configure your environment:
+   ```bash
+   cp .env.example .env
+   # Edit .env with your settings (SESSION_SECRET is required)
+   ```
+
+3. Start the stack:
+   ```bash
+   docker compose -f docker-compose.prebuilt.yml up -d
+   ```
+
+4. Access the application at http://localhost:8080
+
+To use a specific version instead of `latest`:
+```bash
+MESHMANAGER_VERSION=0.1.0 docker compose -f docker-compose.prebuilt.yml up -d
+```
+
+### Production (Build from Source)
+
+If you prefer to build the images yourself:
+
+1. Clone the repository and configure:
+   ```bash
+   git clone https://github.com/Yeraze/meshmanager.git
+   cd meshmanager
    cp .env.example .env
    # Edit .env with your settings
    ```
@@ -66,6 +100,7 @@ docker compose -f docker-compose.dev.yml down
 
 | Variable | Description | Default |
 |----------|-------------|---------|
+| `MESHMANAGER_VERSION` | Docker image version (prebuilt only) | `latest` |
 | `POSTGRES_PASSWORD` | PostgreSQL password | `meshmanager` |
 | `SESSION_SECRET` | Session signing secret (required) | - |
 | `OIDC_ISSUER` | OIDC provider URL | - |
