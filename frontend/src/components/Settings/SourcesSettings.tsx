@@ -74,7 +74,7 @@ export default function SourcesSettings() {
   const testMutation = useTestSource()
   const syncMutation = useSyncSource()
   const [showAddForm, setShowAddForm] = useState(false)
-  const [testResults, setTestResults] = useState<Record<string, { success: boolean; message: string }>>({})
+  const [testResults, setTestResults] = useState<Record<string, { success: boolean; message: string; nodes_found?: number }>>({})
 
   const handleDelete = async (id: string, name: string) => {
     if (confirm(`Are you sure you want to delete "${name}"? This will also delete all associated nodes and data.`)) {
@@ -168,8 +168,8 @@ export default function SourcesSettings() {
               {testResults[source.id] && (
                 <div className={`source-test-result ${testResults[source.id].success ? 'success' : 'error'}`}>
                   {testResults[source.id].message}
-                  {testResults[source.id].success && (testResults[source.id] as any).nodes_found !== undefined && (
-                    <span> ({(testResults[source.id] as any).nodes_found} nodes found)</span>
+                  {testResults[source.id].success && testResults[source.id].nodes_found !== undefined && (
+                    <span> ({testResults[source.id].nodes_found} nodes found)</span>
                   )}
                 </div>
               )}
