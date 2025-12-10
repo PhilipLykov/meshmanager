@@ -248,3 +248,61 @@ async def collect_historical_data_all(
     """Trigger historical data collection for all MeshMonitor sources."""
     count = await collector_manager.trigger_historical_collection_all()
     return {"message": f"Historical collection started for {count} sources"}
+
+
+@router.post("/{source_id}/collect-node-history")
+async def collect_per_node_historical_data(
+    source_id: str,
+    days_back: int = 7,
+    db: AsyncSession = Depends(get_db),
+    _admin: None = Depends(require_admin),
+) -> dict:
+    """Trigger per-node historical telemetry collection for a source.
+
+    Uses the new MeshMonitor per-node API (if available) to fetch historical
+    telemetry for all nodes from this source.
+
+    Args:
+        source_id: The source ID
+        days_back: Number of days of history to fetch (default 7)
+    """
+    result = await db.execute(select(Source).where(Source.id == source_id))
+    source = result.scalar()
+    if not source:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    if source.type != SourceType.MESHMONITOR:
+        raise HTTPException(
+            status_code=400,
+            detail="Per-node historical collection only supported for MeshMonitor sources",
+        )
+
+    success = await collector_manager.trigger_per_node_historical_collection(
+        source_id, days_back=days_back
+    )
+    if success:
+        return {
+            "message": f"Per-node historical collection started ({days_back} days)",
+            "source_id": source_id,
+        }
+    else:
+        raise HTTPException(
+            status_code=500, detail="Failed to start per-node historical collection"
+        )
+
+
+@router.post("/collect-node-history-all")
+async def collect_per_node_historical_data_all(
+    days_back: int = 7,
+    _admin: None = Depends(require_admin),
+) -> dict:
+    """Trigger per-node historical telemetry collection for all MeshMonitor sources.
+
+    Uses the new MeshMonitor per-node API to fetch historical telemetry.
+    """
+    count = await collector_manager.trigger_per_node_historical_collection_all(
+        days_back=days_back
+    )
+    return {
+        "message": f"Per-node historical collection started for {count} sources ({days_back} days)",
+    }

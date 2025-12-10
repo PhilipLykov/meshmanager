@@ -189,6 +189,57 @@ class CollectorManager:
                 count += 1
         return count
 
+    async def trigger_per_node_historical_collection(
+        self, source_id: str, days_back: int = 7
+    ) -> bool:
+        """Trigger per-node historical telemetry collection for a source.
+
+        Uses the new per-node API endpoint (if available) to fetch historical
+        telemetry for all nodes.
+
+        Returns True if collection was started, False if source not found.
+        """
+        collector = self._collectors.get(source_id)
+        if not collector:
+            return False
+
+        # Only MeshMonitor collectors support per-node historical collection
+        if hasattr(collector, 'collect_all_nodes_historical_telemetry'):
+            import asyncio
+            asyncio.create_task(collector.collect_all_nodes_historical_telemetry(
+                days_back=days_back,
+                batch_size=500,
+                delay_seconds=2.0,
+            ))
+            logger.info(
+                f"Triggered per-node historical collection for source {source_id} "
+                f"({days_back} days back)"
+            )
+            return True
+        return False
+
+    async def trigger_per_node_historical_collection_all(
+        self, days_back: int = 7
+    ) -> int:
+        """Trigger per-node historical collection for all MeshMonitor sources.
+
+        Returns the number of sources that started collection.
+        """
+        count = 0
+        for source_id, collector in self._collectors.items():
+            if hasattr(collector, 'collect_all_nodes_historical_telemetry'):
+                import asyncio
+                asyncio.create_task(collector.collect_all_nodes_historical_telemetry(
+                    days_back=days_back,
+                    batch_size=500,
+                    delay_seconds=2.0,
+                ))
+                logger.info(
+                    f"Triggered per-node historical collection for source {source_id}"
+                )
+                count += 1
+        return count
+
 
 # Global collector manager instance
 collector_manager = CollectorManager()

@@ -2,7 +2,8 @@
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from urllib.parse import quote
 
 import httpx
 from sqlalchemy import select
@@ -822,6 +823,251 @@ class MeshMonitorCollector(BaseCollector):
         except Exception as e:
             logger.error(f"Error collecting telemetry batch: {e}")
             return 0
+
+    async def _collect_node_telemetry_history(
+        self,
+        client: httpx.AsyncClient,
+        headers: dict,
+        node_id: str,
+        since_ms: int | None = None,
+        before_ms: int | None = None,
+        limit: int = 500,
+    ) -> tuple[int, int | None]:
+        """Collect historical telemetry for a specific node using the per-node API.
+
+        Uses the new /api/v1/telemetry/{nodeId} endpoint with time-based filtering.
+
+        Args:
+            client: HTTP client
+            headers: Request headers including auth
+            node_id: Node ID (e.g., "!a2e4ff4c")
+            since_ms: Only fetch records after this timestamp (milliseconds)
+            before_ms: Only fetch records before this timestamp (milliseconds)
+            limit: Maximum records per request
+
+        Returns:
+            Tuple of (records_collected, oldest_timestamp_ms) for pagination
+        """
+        try:
+            params: dict = {"limit": limit}
+            if since_ms:
+                params["since"] = since_ms
+            if before_ms:
+                params["before"] = before_ms
+
+            # URL-encode the node_id since it contains '!' character
+            encoded_node_id = quote(node_id, safe='')
+            response = await client.get(
+                f"{self.source.url}/api/v1/telemetry/{encoded_node_id}",
+                headers=headers,
+                params=params,
+            )
+
+            if response.status_code == 404:
+                # Endpoint not available (older MeshMonitor version)
+                return 0, None
+
+            if response.status_code != 200:
+                logger.warning(
+                    f"Failed to fetch telemetry for node {node_id}: {response.status_code}"
+                )
+                return 0, None
+
+            data = response.json()
+            if isinstance(data, dict) and "data" in data:
+                telemetry_data = data.get("data", [])
+            elif isinstance(data, list):
+                telemetry_data = data
+            else:
+                telemetry_data = []
+
+            if not telemetry_data:
+                return 0, None
+
+            # Find the oldest timestamp for pagination
+            oldest_ts = None
+            for telem in telemetry_data:
+                ts = telem.get("timestamp") or telem.get("createdAt")
+                if ts and (oldest_ts is None or ts < oldest_ts):
+                    oldest_ts = ts
+
+            # Insert into database
+            async with async_session_maker() as db:
+                for telem in telemetry_data:
+                    await self._insert_telemetry(db, telem)
+                await db.commit()
+
+            return len(telemetry_data), oldest_ts
+
+        except Exception as e:
+            logger.error(f"Error collecting telemetry for node {node_id}: {e}")
+            return 0, None
+
+    async def collect_node_historical_telemetry(
+        self,
+        node_id: str,
+        days_back: int = 7,
+        batch_size: int = 500,
+        delay_seconds: float = 2.0,
+        max_batches: int = 100,
+    ) -> int:
+        """Collect historical telemetry for a specific node.
+
+        Uses the new per-node API endpoint to fetch historical data going back
+        a specified number of days.
+
+        Args:
+            node_id: Node ID (e.g., "!a2e4ff4c")
+            days_back: How many days of history to fetch
+            batch_size: Records per batch
+            delay_seconds: Delay between batches
+            max_batches: Maximum batches to fetch
+
+        Returns:
+            Total number of records collected
+        """
+        if not self.source.url:
+            return 0
+
+        # Calculate the cutoff timestamp
+        cutoff_ms = int(
+            (datetime.now(timezone.utc) - timedelta(days=days_back)).timestamp() * 1000
+        )
+
+        logger.info(
+            f"Collecting historical telemetry for node {node_id} "
+            f"(up to {days_back} days back)"
+        )
+
+        total_collected = 0
+        before_ms: int | None = None  # Start from now and work backwards
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                headers = self._get_headers()
+
+                for batch_num in range(max_batches):
+                    count, oldest_ts = await self._collect_node_telemetry_history(
+                        client,
+                        headers,
+                        node_id,
+                        since_ms=cutoff_ms,
+                        before_ms=before_ms,
+                        limit=batch_size,
+                    )
+
+                    if count == 0:
+                        logger.debug(f"No more historical data for node {node_id}")
+                        break
+
+                    total_collected += count
+
+                    # Update before_ms for next batch (go further back in time)
+                    if oldest_ts:
+                        before_ms = oldest_ts
+
+                        # Check if we've gone back far enough
+                        if oldest_ts <= cutoff_ms:
+                            logger.debug(
+                                f"Reached cutoff date for node {node_id}"
+                            )
+                            break
+
+                    logger.debug(
+                        f"Node {node_id} batch {batch_num + 1}: "
+                        f"collected {count} records (total: {total_collected})"
+                    )
+
+                    # Delay before next batch
+                    if batch_num < max_batches - 1 and count == batch_size:
+                        await asyncio.sleep(delay_seconds)
+
+        except Exception as e:
+            logger.error(f"Error collecting historical telemetry for {node_id}: {e}")
+
+        logger.info(
+            f"Historical collection for node {node_id} complete: "
+            f"{total_collected} records"
+        )
+        return total_collected
+
+    async def collect_all_nodes_historical_telemetry(
+        self,
+        days_back: int = 7,
+        batch_size: int = 500,
+        delay_seconds: float = 2.0,
+    ) -> int:
+        """Collect historical telemetry for all known nodes.
+
+        Fetches the list of nodes from the nodes endpoint, then collects
+        historical telemetry for each one using the per-node API.
+
+        Args:
+            days_back: How many days of history to fetch per node
+            batch_size: Records per batch
+            delay_seconds: Delay between batches
+
+        Returns:
+            Total number of records collected across all nodes
+        """
+        if not self.source.url:
+            return 0
+
+        logger.info(
+            f"Starting historical telemetry collection for all nodes from {self.source.name}"
+        )
+
+        total_collected = 0
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                headers = self._get_headers()
+
+                # First, get list of nodes
+                response = await client.get(
+                    f"{self.source.url}/api/v1/nodes",
+                    headers=headers,
+                )
+
+                if response.status_code != 200:
+                    logger.warning(f"Failed to fetch nodes: {response.status_code}")
+                    return 0
+
+                data = response.json()
+                if isinstance(data, dict) and "data" in data:
+                    nodes = data.get("data", [])
+                elif isinstance(data, list):
+                    nodes = data
+                else:
+                    nodes = []
+
+                logger.info(f"Found {len(nodes)} nodes for historical collection")
+
+                # Collect historical telemetry for each node
+                for i, node in enumerate(nodes):
+                    node_id = node.get("nodeId") or node.get("id")
+                    if not node_id:
+                        continue
+
+                    count = await self.collect_node_historical_telemetry(
+                        node_id=node_id,
+                        days_back=days_back,
+                        batch_size=batch_size,
+                        delay_seconds=delay_seconds,
+                    )
+                    total_collected += count
+
+                    # Small delay between nodes to be nice to the API
+                    if i < len(nodes) - 1:
+                        await asyncio.sleep(1.0)
+
+        except Exception as e:
+            logger.error(f"Error in all-nodes historical collection: {e}")
+
+        logger.info(
+            f"All-nodes historical collection complete: {total_collected} total records"
+        )
+        return total_collected
 
     async def start(self, collect_history: bool = False) -> None:
         """Start periodic collection.
