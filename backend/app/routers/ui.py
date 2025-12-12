@@ -431,13 +431,24 @@ async def identify_solar_nodes(
     # Analyze each node's daily patterns
     solar_candidates = []
 
+    # Global tracking for average hours calculations
+    all_charging_hours = []  # Hours between sunrise and sunset (daylight/charging period)
+    all_discharge_hours = []  # Hours between sunset and next sunrise (overnight/discharge period)
+
     for node_num, daily_data in node_data.items():
         days_with_pattern = 0
         total_days = 0
         high_efficiency_days = 0
         daily_patterns = []
+        charge_rates = []  # List of charge rates per hour for averaging
+        discharge_rates = []  # List of discharge rates per hour for averaging
+        previous_day_sunset = None  # Track previous day's sunset for discharge calculation
 
-        for date_str, readings in daily_data.items():
+        # Sort dates to process in chronological order for discharge calculation
+        sorted_dates = sorted(daily_data.keys())
+
+        for date_str in sorted_dates:
+            readings = daily_data[date_str]
             if len(readings) < 3:  # Need at least 3 readings to detect a pattern
                 continue
 
@@ -566,6 +577,31 @@ async def identify_solar_nodes(
 
             if has_solar_pattern:
                 days_with_pattern += 1
+
+                # Calculate charge rate per hour (sunrise -> peak)
+                charging_hours = (peak_time - sunrise_time).total_seconds() / 3600
+                charge_rate = (peak_value - sunrise_value) / charging_hours if charging_hours > 0 else 0
+                charge_rates.append(charge_rate)
+
+                # Track daylight/charging hours (sunrise -> sunset)
+                daylight_hours = (sunset_time - sunrise_time).total_seconds() / 3600
+                if daylight_hours > 0:
+                    all_charging_hours.append(daylight_hours)
+
+                # Calculate discharge rate per hour (previous sunset -> this sunrise)
+                discharge_rate = None
+                if previous_day_sunset is not None:
+                    prev_sunset_time = previous_day_sunset["time"]
+                    prev_sunset_value = previous_day_sunset["value"]
+                    # Calculate hours between previous sunset and current sunrise
+                    discharge_hours = (sunrise_time - prev_sunset_time).total_seconds() / 3600
+                    if discharge_hours > 0:
+                        # Discharge is previous_sunset - current_sunrise (should be positive if discharging)
+                        discharge_rate = (prev_sunset_value - sunrise_value) / discharge_hours
+                        discharge_rates.append(discharge_rate)
+                        # Track overnight/discharge hours
+                        all_discharge_hours.append(discharge_hours)
+
                 daily_patterns.append({
                     "date": date_str,
                     "sunrise": {
@@ -582,7 +618,17 @@ async def identify_solar_nodes(
                     },
                     "rise": round(rise, 1),
                     "fall": round(fall, 1),
+                    "charge_rate_per_hour": round(charge_rate, 2),
+                    "discharge_rate_per_hour": round(discharge_rate, 2) if discharge_rate is not None else None,
                 })
+
+            # Track this day's sunset for next day's discharge calculation
+            # Only track if we have valid sunset data
+            if sunset_time and sunset_value is not None:
+                previous_day_sunset = {
+                    "time": sunset_time,
+                    "value": sunset_value,
+                }
 
         # Consider a node solar-powered if it shows the pattern on enough analyzed days
         # High-efficiency nodes (stay 90-100%) use a lower threshold since small swings
@@ -612,6 +658,10 @@ async def identify_solar_nodes(
             # Sort by timestamp and deduplicate
             all_chart_data.sort(key=lambda x: x["timestamp"])
 
+            # Calculate average rates
+            avg_charge_rate = round(sum(charge_rates) / len(charge_rates), 2) if charge_rates else None
+            avg_discharge_rate = round(sum(discharge_rates) / len(discharge_rates), 2) if discharge_rates else None
+
             solar_candidates.append({
                 "node_num": node_num,
                 "node_name": node_names.get(node_num, f"!{node_num:08x}"),
@@ -621,6 +671,8 @@ async def identify_solar_nodes(
                 "recent_patterns": daily_patterns[-3:],  # Last 3 days with patterns
                 "metric_type": metric_type,
                 "chart_data": all_chart_data,
+                "avg_charge_rate_per_hour": avg_charge_rate,
+                "avg_discharge_rate_per_hour": avg_discharge_rate,
             })
 
     # Sort by solar score descending
@@ -645,12 +697,18 @@ async def identify_solar_nodes(
         for row in solar_rows
     ]
 
+    # Calculate global averages
+    avg_charging_hours_per_day = round(sum(all_charging_hours) / len(all_charging_hours), 1) if all_charging_hours else None
+    avg_discharge_hours_per_day = round(sum(all_discharge_hours) / len(all_discharge_hours), 1) if all_discharge_hours else None
+
     return {
         "lookback_days": lookback_days,
         "total_nodes_analyzed": len(node_data),
         "solar_nodes_count": len(solar_candidates),
         "solar_nodes": solar_candidates,
         "solar_production": solar_chart_data,
+        "avg_charging_hours_per_day": avg_charging_hours_per_day,
+        "avg_discharge_hours_per_day": avg_discharge_hours_per_day,
     }
 
 

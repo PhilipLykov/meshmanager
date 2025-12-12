@@ -125,6 +125,33 @@ export default function SolarMonitoring() {
               </div>
             </div>
           )}
+
+          {/* Average Hours Stats */}
+          {data && (data.avg_charging_hours_per_day !== null || data.avg_discharge_hours_per_day !== null) && (
+            <div style={controlGroupStyle}>
+              <div style={labelStyle}>Average Daily Cycle</div>
+              <div
+                style={{ fontSize: '0.85rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}
+              >
+                {data.avg_charging_hours_per_day !== null && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>Charging Hours:</span>
+                    <strong style={{ color: 'var(--color-success, #22c55e)' }}>
+                      {data.avg_charging_hours_per_day.toFixed(1)} hrs/day
+                    </strong>
+                  </div>
+                )}
+                {data.avg_discharge_hours_per_day !== null && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>Discharge Hours:</span>
+                    <strong style={{ color: 'var(--color-error, #ef4444)' }}>
+                      {data.avg_discharge_hours_per_day.toFixed(1)} hrs/day
+                    </strong>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -278,6 +305,26 @@ function SolarNodeCard({ node, solarProduction }: { node: SolarNode; solarProduc
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          {node.avg_charge_rate_per_hour !== null && (
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--color-success, #22c55e)' }}>
+                +{node.avg_charge_rate_per_hour.toFixed(2)}
+              </div>
+              <div style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)' }}>
+                {node.metric_type === 'battery' ? '%' : 'V'}/hr charge
+              </div>
+            </div>
+          )}
+          {node.avg_discharge_rate_per_hour !== null && (
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--color-error, #ef4444)' }}>
+                -{node.avg_discharge_rate_per_hour.toFixed(2)}
+              </div>
+              <div style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)' }}>
+                {node.metric_type === 'battery' ? '%' : 'V'}/hr drain
+              </div>
+            </div>
+          )}
           <div style={{ textAlign: 'right' }}>
             <div
               style={{
@@ -449,6 +496,8 @@ function SolarNodeCard({ node, solarProduction }: { node: SolarNode; solarProduc
                     </th>
                     <th style={{ textAlign: 'right', padding: '0.5rem', fontWeight: 600 }}>Rise</th>
                     <th style={{ textAlign: 'right', padding: '0.5rem', fontWeight: 600 }}>Fall</th>
+                    <th style={{ textAlign: 'right', padding: '0.5rem', fontWeight: 600 }}>Charge/hr</th>
+                    <th style={{ textAlign: 'right', padding: '0.5rem', fontWeight: 600 }}>Drain/hr</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -499,6 +548,28 @@ function SolarNodeCard({ node, solarProduction }: { node: SolarNode; solarProduc
                         }}
                       >
                         -{pattern.fall}
+                      </td>
+                      <td
+                        style={{
+                          padding: '0.5rem',
+                          textAlign: 'right',
+                          color: 'var(--color-success, #22c55e)',
+                          fontWeight: 500,
+                        }}
+                      >
+                        +{pattern.charge_rate_per_hour.toFixed(2)}
+                      </td>
+                      <td
+                        style={{
+                          padding: '0.5rem',
+                          textAlign: 'right',
+                          color: 'var(--color-error, #ef4444)',
+                          fontWeight: 500,
+                        }}
+                      >
+                        {pattern.discharge_rate_per_hour !== null
+                          ? `-${pattern.discharge_rate_per_hour.toFixed(2)}`
+                          : '-'}
                       </td>
                     </tr>
                   ))}

@@ -304,6 +304,8 @@ export interface SolarPattern {
   sunset: { time: string; value: number }
   rise: number
   fall: number
+  charge_rate_per_hour: number
+  discharge_rate_per_hour: number | null
 }
 
 export interface SolarChartPoint {
@@ -320,6 +322,8 @@ export interface SolarNode {
   recent_patterns: SolarPattern[]
   metric_type: 'battery' | 'voltage'
   chart_data: SolarChartPoint[]
+  avg_charge_rate_per_hour: number | null
+  avg_discharge_rate_per_hour: number | null
 }
 
 export interface SolarProductionPoint {
@@ -333,6 +337,8 @@ export interface SolarNodesAnalysis {
   solar_nodes_count: number
   solar_nodes: SolarNode[]
   solar_production: SolarProductionPoint[]
+  avg_charging_hours_per_day: number | null
+  avg_discharge_hours_per_day: number | null
 }
 
 export async function fetchSolarNodesAnalysis(lookbackDays?: number): Promise<SolarNodesAnalysis> {

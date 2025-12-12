@@ -287,6 +287,8 @@ describe('API Service', () => {
         lookback_days: 7,
         total_nodes_analyzed: 50,
         solar_nodes_count: 5,
+        avg_charging_hours_per_day: 10.5,
+        avg_discharge_hours_per_day: 13.5,
         solar_nodes: [
           {
             node_num: 12345678,
@@ -297,6 +299,8 @@ describe('API Service', () => {
             recent_patterns: [],
             metric_type: 'battery',
             chart_data: [],
+            avg_charge_rate_per_hour: 3.85,
+            avg_discharge_rate_per_hour: 0.54,
           },
         ],
         solar_production: [],
@@ -314,6 +318,8 @@ describe('API Service', () => {
         lookback_days: 14,
         total_nodes_analyzed: 50,
         solar_nodes_count: 5,
+        avg_charging_hours_per_day: 10.5,
+        avg_discharge_hours_per_day: 13.5,
         solar_nodes: [],
         solar_production: [],
       }
