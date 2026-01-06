@@ -832,10 +832,10 @@ async def identify_solar_nodes(
                             "time": battery_result["sunset"]["time"].strftime("%H:%M"),
                             "value": round(battery_result["sunset"]["value"], 1),
                         },
-                        "rise": round(battery_result["rise"], 1),
-                        "fall": round(battery_result["fall"], 1),
-                        "charge_rate_per_hour": round(battery_result["charge_rate"], 2),
-                        "discharge_rate_per_hour": round(battery_result["discharge_rate"], 2) if battery_result["discharge_rate"] else None,
+                        "rise": round(battery_result["rise"], 1) if battery_result["rise"] is not None else None,
+                        "fall": round(battery_result["fall"], 1) if battery_result["fall"] is not None else None,
+                        "charge_rate_per_hour": round(battery_result["charge_rate"], 2) if battery_result["charge_rate"] is not None else None,
+                        "discharge_rate_per_hour": round(battery_result["discharge_rate"], 2) if battery_result["discharge_rate"] is not None else None,
                     })
                     # Track sunset for next day's discharge calculation
                     battery_stats["previous_day_sunset"] = {
@@ -881,10 +881,10 @@ async def identify_solar_nodes(
                             "time": voltage_result["sunset"]["time"].strftime("%H:%M"),
                             "value": round(voltage_result["sunset"]["value"], 1),
                         },
-                        "rise": round(voltage_result["rise"], 1),
-                        "fall": round(voltage_result["fall"], 1),
-                        "charge_rate_per_hour": round(voltage_result["charge_rate"], 2),
-                        "discharge_rate_per_hour": round(voltage_result["discharge_rate"], 2) if voltage_result["discharge_rate"] else None,
+                        "rise": round(voltage_result["rise"], 1) if voltage_result["rise"] is not None else None,
+                        "fall": round(voltage_result["fall"], 1) if voltage_result["fall"] is not None else None,
+                        "charge_rate_per_hour": round(voltage_result["charge_rate"], 2) if voltage_result["charge_rate"] is not None else None,
+                        "discharge_rate_per_hour": round(voltage_result["discharge_rate"], 2) if voltage_result["discharge_rate"] is not None else None,
                     })
                     # Track sunset for next day's discharge calculation
                     voltage_stats["previous_day_sunset"] = {
@@ -932,10 +932,10 @@ async def identify_solar_nodes(
                                 "time": ina_result["sunset"]["time"].strftime("%H:%M"),
                                 "value": round(ina_result["sunset"]["value"], 3),
                             },
-                            "rise": round(ina_result["rise"], 3),
-                            "fall": round(ina_result["fall"], 3),
-                            "charge_rate_per_hour": round(ina_result["charge_rate"], 4),
-                            "discharge_rate_per_hour": round(ina_result["discharge_rate"], 4) if ina_result["discharge_rate"] else None,
+                            "rise": round(ina_result["rise"], 3) if ina_result["rise"] is not None else None,
+                            "fall": round(ina_result["fall"], 3) if ina_result["fall"] is not None else None,
+                            "charge_rate_per_hour": round(ina_result["charge_rate"], 4) if ina_result["charge_rate"] is not None else None,
+                            "discharge_rate_per_hour": round(ina_result["discharge_rate"], 4) if ina_result["discharge_rate"] is not None else None,
                         })
                         stats["previous_day_sunset"] = {
                             "time": ina_result["sunset"]["time"],
@@ -1048,9 +1048,9 @@ async def identify_solar_nodes(
                         })
             all_chart_data.sort(key=lambda x: x["timestamp"])
 
-            # Calculate average rates from chosen metric
-            charge_rates = chosen_stats["charge_rates"]
-            discharge_rates = chosen_stats["discharge_rates"]
+            # Calculate average rates from chosen metric (filter None values)
+            charge_rates = [r for r in chosen_stats["charge_rates"] if r is not None]
+            discharge_rates = [r for r in chosen_stats["discharge_rates"] if r is not None]
             avg_charge_rate = round(sum(charge_rates) / len(charge_rates), 2) if charge_rates else None
             avg_discharge_rate = round(sum(discharge_rates) / len(discharge_rates), 2) if discharge_rates else None
 
@@ -1522,12 +1522,14 @@ async def analyze_solar_forecast(
                             chosen_metric_type = channel_name
                             break
 
-            charge_rates = chosen_stats["charge_rates"] if chosen_stats else []
-            discharge_rates = chosen_stats["discharge_rates"] if chosen_stats else []
+            charge_rates = [r for r in (chosen_stats["charge_rates"] if chosen_stats else []) if r is not None]
+            discharge_rates = [r for r in (chosen_stats["discharge_rates"] if chosen_stats else []) if r is not None]
             avg_charge_rate = sum(charge_rates) / len(charge_rates) if charge_rates else 0
             avg_discharge_rate = sum(discharge_rates) / len(discharge_rates) if discharge_rates else 0
-            avg_charging_hours = sum(all_charging_hours) / len(all_charging_hours) if all_charging_hours else 10
-            avg_discharge_hours = sum(all_discharge_hours) / len(all_discharge_hours) if all_discharge_hours else 14
+            valid_charging_hours = [h for h in all_charging_hours if h is not None]
+            valid_discharge_hours = [h for h in all_discharge_hours if h is not None]
+            avg_charging_hours = sum(valid_charging_hours) / len(valid_charging_hours) if valid_charging_hours else 10
+            avg_discharge_hours = sum(valid_discharge_hours) / len(valid_discharge_hours) if valid_discharge_hours else 14
 
             # Simulate using battery level (we always need battery for the simulation)
             if last_known_battery is not None:
