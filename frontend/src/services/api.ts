@@ -621,3 +621,52 @@ export async function fetchMessageSources(packetId: string): Promise<MessageSour
   )
   return response.data
 }
+
+// Configuration Export/Import
+export interface DisplaySettingsConfig {
+  active_hours: number
+  online_hours: number
+}
+
+export interface ImportResult {
+  success: boolean
+  sources_imported: number
+  sources_skipped: number
+  display_settings_imported: boolean
+  analysis_configs_imported: string[]
+  warnings: string[]
+  display_settings: DisplaySettingsConfig | null
+}
+
+export async function exportConfig(options?: {
+  include_credentials?: boolean
+}): Promise<Blob> {
+  const params = new URLSearchParams()
+  if (options?.include_credentials !== undefined) {
+    params.append('include_credentials', String(options.include_credentials))
+  }
+  const queryString = params.toString()
+  const url = queryString
+    ? `/api/admin/config/export?${queryString}`
+    : '/api/admin/config/export'
+  const response = await api.get(url, {
+    responseType: 'blob',
+  })
+  return response.data
+}
+
+export async function importConfig(
+  config: unknown,
+  options?: { merge_sources?: boolean }
+): Promise<ImportResult> {
+  const params = new URLSearchParams()
+  if (options?.merge_sources !== undefined) {
+    params.append('merge_sources', String(options.merge_sources))
+  }
+
+  const response = await api.post<ImportResult>(
+    `/api/admin/config/import?${params.toString()}`,
+    config
+  )
+  return response.data
+}
