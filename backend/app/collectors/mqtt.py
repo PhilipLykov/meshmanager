@@ -9,7 +9,7 @@ import aiomqtt
 
 from app.collectors.base import BaseCollector
 from app.database import async_session_maker
-from app.models import Message, Node, Source, Telemetry
+from app.models import Channel, Message, Node, Source, Telemetry
 from app.schemas.source import SourceTestResult
 from app.services.protobuf import decode_meshtastic_packet
 
@@ -153,6 +153,7 @@ class MqttCollector(BaseCollector):
         msg_type = data.get("type", "").lower()
 
         async with async_session_maker() as db:
+            await self._ensure_channel(db, data)
             if msg_type == "text" or "text" in data:
                 await self._handle_text_message(db, data)
             elif msg_type == "position" or "position" in data:
@@ -163,6 +164,91 @@ class MqttCollector(BaseCollector):
                 await self._handle_nodeinfo(db, data)
 
             await db.commit()
+
+    @staticmethod
+    def _extract_channel(data: dict) -> int:
+        """
+        Extract channel index from MQTT message.
+        
+        Meshtastic MQTT messages can have the channel field in different locations
+        depending on the message format and converter used:
+        - Standard JSON format: top-level "channel" field
+        - Protobuf-decoded format: may be in "decoded.channel" or "packet.channel"
+        - Some converters: may nest it in "payload.channel"
+        
+        This method checks multiple common locations to support various MQTT message
+        formats and converters, ensuring compatibility with different Meshtastic MQTT
+        implementations.
+        
+        Returns:
+            Channel index as integer, or 0 if not found (default channel).
+        """
+        # Check top-level channel (standard Meshtastic JSON format)
+        channel = data.get("channel")
+        if channel is not None:
+            try:
+                return int(channel)
+            except (TypeError, ValueError):
+                pass
+        
+        # Check packet.channel (for protobuf-decoded messages)
+        packet = data.get("packet", {})
+        if isinstance(packet, dict):
+            channel = packet.get("channel")
+            if channel is not None:
+                try:
+                    return int(channel)
+                except (TypeError, ValueError):
+                    pass
+        
+        # Check decoded.channel (for some JSON converters)
+        decoded = data.get("decoded", {})
+        if isinstance(decoded, dict):
+            channel = decoded.get("channel")
+            if channel is not None:
+                try:
+                    return int(channel)
+                except (TypeError, ValueError):
+                    pass
+        
+        # Check payload.channel (for some message formats where payload is a dict)
+        payload = data.get("payload")
+        if isinstance(payload, dict):
+            channel = payload.get("channel")
+            if channel is not None:
+                try:
+                    return int(channel)
+                except (TypeError, ValueError):
+                    pass
+        
+        # Default to channel 0 (primary channel)
+        return 0
+
+    async def _ensure_channel(self, db, data: dict) -> None:
+        """Ensure a channel record exists for MQTT messages."""
+        channel_index = self._extract_channel(data)
+        # Skip channel -1 (not a real channel)
+        if channel_index < 0:
+            return
+
+        from sqlalchemy import select
+
+        result = await db.execute(
+            select(Channel).where(
+                Channel.source_id == self.source.id,
+                Channel.channel_index == channel_index,
+            )
+        )
+        channel = result.scalar()
+        if channel:
+            return
+
+        channel = Channel(
+            source_id=self.source.id,
+            channel_index=channel_index,
+            name=data.get("channel_name") or data.get("channelName"),
+        )
+        db.add(channel)
 
     async def _process_protobuf_message(self, topic: str, payload: bytes) -> None:
         """Process a protobuf-encoded Meshtastic message."""
@@ -194,7 +280,7 @@ class MqttCollector(BaseCollector):
             packet_id=data.get("id"),
             from_node_num=from_node,
             to_node_num=to_node,
-            channel=data.get("channel", 0),
+            channel=self._extract_channel(data),
             text=data.get("text") or data.get("payload"),
             hop_limit=data.get("hopLimit"),
             hop_start=data.get("hopStart"),
